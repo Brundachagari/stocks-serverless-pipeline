@@ -1,117 +1,185 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Stock Movers Dashboard</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      max-width: 900px;
-      margin: 40px auto;
-      padding: 20px;
-      background: #f7f9fc;
-      color: #222;
-    }
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Top Movers</title>
 
-    .card {
-      background: white;
-      padding: 24px;
-      border-radius: 12px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-    }
+<!-- pulling Chart.js straight from a CDN so there's no build step to deploy -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 
-    h1 {
-      margin-bottom: 8px;
-    }
+<style>
+  /* one place to change colors, so I'm not hunting through the file later */
+  :root {
+    --bg: #0d0d0f; --card: #18181b; --text: #f4f4f5; --muted: #a1a1aa;
+    --border: #2a2a2e; --accent: #6366f1; --up: #22c55e; --down: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, sans-serif; line-height: 1.5;
+  }
+  /* keep everything in a narrow centered column so it reads on any screen */
+  .wrap { max-width: 720px; margin: 0 auto; padding: 40px 20px 60px; }
+  h1 { font-size: 30px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
 
-    p {
-      color: #555;
-    }
+  .bar { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  button {
+    font: 600 14px system-ui; color: #fff; background: var(--accent);
+    border: 0; border-radius: 9px; padding: 9px 16px; cursor: pointer;
+  }
+  button:disabled { opacity: .6; } /* dims while a refresh is in flight */
+  .source { color: var(--muted); font-size: 12px; margin-left: auto; } /* push to far right */
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 24px;
-    }
+  /* shared card look for the chart and table */
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px; margin-bottom: 16px;
+  }
+  /* the one-line takeaway above the chart */
+  .insight { background: #1e1b3a; border: 1px solid #312e6b; color: #c7d2fe;
+    border-radius: 12px; padding: 14px 16px; font-size: 14px; margin-bottom: 16px; }
+  .insight b { font-weight: 600; }
+  /* fixed height so Chart.js has room to draw and stays responsive */
+  .chart-box { position: relative; height: 300px; }
 
-    th, td {
-      padding: 14px;
-      border-bottom: 1px solid #ddd;
-      text-align: left;
-    }
-
-    th {
-      background: #f1f3f5;
-    }
-
-    .gain {
-      color: green;
-      font-weight: bold;
-    }
-
-    .loss {
-      color: red;
-      font-weight: bold;
-    }
-  </style>
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 12px; text-transform: uppercase; color: var(--muted);
+    padding: 0 0 10px; border-bottom: 1px solid var(--border); }
+  th.r, td.r { text-align: right; } /* numbers line up nicer on the right */
+  td { padding: 12px 0; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: 0; }
+  .up { color: var(--up); font-weight: 600; } /* green for a gain */
+  .down { color: var(--down); font-weight: 600; } /* red for a drop */
+  footer { color: var(--muted); font-size: 12px; }
+</style>
 </head>
 <body>
-  <div class="card">
-    <h1>Stock Movers Dashboard</h1>
-    <p>Tracks the biggest daily mover from AAPL, MSFT, GOOGL, AMZN, TSLA, and NVDA.</p>
+  <div class="wrap">
+    <h1>Top Movers</h1>
+    <p class="sub">Biggest daily % move from the watchlist — AAPL, MSFT, GOOGL, AMZN, TSLA, NVDA.</p>
 
-    <table>
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Ticker</th>
-          <th>Percent Change</th>
-          <th>Closing Price</th>
-        </tr>
-      </thead>
-      <tbody id="movers-table">
-        <tr>
-          <td colspan="4">Loading...</td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="bar">
+      <button id="refresh">Refresh</button>
+      <!-- shows whether the data is live or the fallback sample -->
+      <span class="source">Source: <span id="source">sample</span></span>
+    </div>
+
+    <!-- filled in by JS once the data loads -->
+    <div class="insight" id="insight"></div>
+
+    <!-- the chart gets drawn onto this canvas -->
+    <div class="card"><div class="chart-box"><canvas id="chart"></canvas></div></div>
+
+    <!-- the history table, rows added by JS -->
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>Date</th><th>Ticker</th><th class="r">% Change</th><th class="r">Close</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+
+    <!-- quick reminder of how the pieces connect -->
+    <footer>EventBridge &rarr; Lambda &rarr; DynamoDB &rarr; API Gateway &rarr; S3</footer>
   </div>
 
-  <script>
-    const API_URL = "https://86sc0f21kk.execute-api.us-east-1.amazonaws.com/movers";
+<script>
+// point this at my "GET /movers" API URL
+const API_URL = "http://stock-movers-dashboard-556183271380.s3-website-us-east-1.amazonaws.com";
 
-    async function loadMovers() {
-      const tableBody = document.getElementById("movers-table");
+// hard-coded backup so the page is never empty, even if the API is down
+const SAMPLE = [
+  { date: "2026-06-11", ticker: "TSLA", percent_change:  2.80, closing_price: 399.15 },
+  { date: "2026-06-12", ticker: "AMZN", percent_change: -1.92, closing_price: 238.55 },
+  { date: "2026-06-15", ticker: "NVDA", percent_change:  1.69, closing_price: 212.45 },
+  { date: "2026-06-16", ticker: "NVDA", percent_change: -1.79, closing_price: 207.41 },
+  { date: "2026-06-17", ticker: "AMZN", percent_change: -3.02, closing_price: 237.50 },
+  { date: "2026-06-18", ticker: "AMZN", percent_change:  1.78, closing_price: 244.39 },
+  { date: "2026-06-22", ticker: "AMZN", percent_change: -3.04, closing_price: 232.79 },
+];
 
-      try {
-        const response = await fetch(API_URL);
-        const movers = await response.json();
+// hold onto the chart so I can tear it down before redrawing on refresh
+let chart = null;
 
-        tableBody.innerHTML = "";
+// small formatters, kept up here so they're easy to reuse
+const pct = (n) => (n > 0 ? "+" : "") + Number(n).toFixed(2) + "%"; // adds the + sign on gains
+const usd = (n) => "$" + Number(n).toFixed(2);
 
-        movers.forEach((mover) => {
-          const row = document.createElement("tr");
-          const changeClass = mover.percent_change >= 0 ? "gain" : "loss";
+// grab the data: try the API, fall back to the sample if anything goes wrong
+async function getData() {
+  if (!API_URL) return SAMPLE; // no URL set yet, just use the sample
+  try {
+    const res = await fetch(API_URL);
+    const body = await res.json();
+    document.getElementById("source").textContent = "live API";
+    // accept a plain array or an object wrapped like { items: [...] }
+    return Array.isArray(body) ? body : body.items;
+  } catch {
+    // network error or bad response, so show the sample and say so
+    document.getElementById("source").textContent = "sample (API down)";
+    return SAMPLE;
+  }
+}
 
-          row.innerHTML = `
-            <td>${mover.date}</td>
-            <td>${mover.ticker}</td>
-            <td class="${changeClass}">${mover.percent_change}%</td>
-            <td>$${mover.closing_price}</td>
-          `;
+// draw the insight line, the chart, and the table from one set of rows
+function render(rows) {
+  rows.sort((a, b) => a.date.localeCompare(b.date)); // oldest to newest, left to right
 
-          tableBody.appendChild(row);
-        });
-      } catch (error) {
-        tableBody.innerHTML = `
-          <tr>
-            <td colspan="4">Failed to load stock movers.</td>
-          </tr>
-        `;
-        console.error(error);
-      }
-    }
+  // find the single biggest move in either direction (abs so a big drop counts too)
+  const top = rows.reduce((a, b) => (Math.abs(b.percent_change) > Math.abs(a.percent_change) ? b : a));
+  document.getElementById("insight").innerHTML =
+    `<b>${top.ticker}</b> moved the most this week — <b>${pct(top.percent_change)}</b> on ${top.date}`;
 
-    loadMovers();
-  </script>
+  // wipe the old chart first or Chart.js stacks a new one on top
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById("chart"), {
+    type: "bar",
+    data: {
+      labels: rows.map((r) => r.date.slice(5)), // just MM-DD on the axis
+      datasets: [{
+        data: rows.map((r) => r.percent_change),
+        // color each bar by direction instead of one flat color
+        backgroundColor: rows.map((r) => (r.percent_change >= 0 ? "#22c55e" : "#ef4444")),
+        borderRadius: 5,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, // let it fill the card
+      plugins: {
+        legend: { display: false }, // only one series, so no legend needed
+        // show the ticker in the hover tooltip, not just the number
+        tooltip: { callbacks: { label: (c) => rows[c.dataIndex].ticker + "  " + pct(c.raw) } },
+      },
+      scales: {
+        // light ticks and faint gridlines so they read on the dark background
+        y: { ticks: { callback: (v) => v + "%", color: "#a1a1aa" }, grid: { color: "#26262b" } },
+        x: { ticks: { color: "#a1a1aa" }, grid: { display: false } },
+      },
+    },
+  });
+
+  // newest day on top in the table (reverse since rows are oldest-first now)
+  document.getElementById("rows").innerHTML = [...rows].reverse().map((r) => `
+    <tr>
+      <td>${r.date}</td>
+      <td>${r.ticker}</td>
+      <td class="r ${r.percent_change >= 0 ? "up" : "down"}">${pct(r.percent_change)}</td>
+      <td class="r">${usd(r.closing_price)}</td>
+    </tr>`).join("");
+}
+
+// load the data and redraw, disabling the button so it can't be spammed
+async function load() {
+  const btn = document.getElementById("refresh");
+  btn.disabled = true;
+  render(await getData());
+  btn.disabled = false;
+}
+document.getElementById("refresh").addEventListener("click", load); // refresh on click
+load(); // and run once on page load
+</script>
 </body>
 </html>
