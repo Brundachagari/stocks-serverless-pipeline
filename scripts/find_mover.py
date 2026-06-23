@@ -17,7 +17,7 @@ if not API_KEY:
     raise ValueError("Missing STOCK_API_KEY. Add it to your .env file.")
 
 
-# Required project watchlist
+# project watchlist
 WATCHLIST = [
     "AAPL",   # Apple
     "MSFT",   # Microsoft
@@ -37,10 +37,10 @@ def get_stock_change(ticker):
     Fetch a stock's open/close data and calculate its daily percent change.
 
     This function represents the core ingestion logic that will later run inside AWS Lambda
-    1. Call the external stock API
-    2. Validate the response
-    3. Calculate the required percent change
-    4. Return clean structured data for storage
+    1. Call the external stock API.
+    2. Validate the response.
+    3. Calculate the required percent change.
+    4. Return clean structured data for storage.
     """
 
     url = f"https://api.massive.com/v1/open-close/{ticker}/{DATE}"
@@ -49,12 +49,12 @@ def get_stock_change(ticker):
         "Authorization": f"Bearer {API_KEY}"
     }
 
-    # adjusted=true helps account for stock splits (ex. $100 - 1 stock = $50 - 2 stocks)
+    # adjusted=true helps account for stock splits and other historical adjustments.
     params = {
         "adjusted": "true"
     }
 
-    # timeout prevents the script from hanging if the stock API is slow or unavailable
+    # Timeout prevents the script from hanging if the stock API is slow or unavailable
     response = requests.get(url, headers=headers, params=params, timeout=10)
 
     print(f"\nFetching {ticker}...")
@@ -68,7 +68,22 @@ def get_stock_change(ticker):
         raise
 
     # API failure handling
-    # (AWS- CloudWatch logs for debugging)
+    # 429 - the external stock API rate-limited the request
+    if response.status_code == 429:
+        print(f"Rate limit hit for {ticker}. Waiting 65 seconds before retrying...")
+        time.sleep(65)
+
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        print("Retry status code:", response.status_code)
+
+        try:
+            data = response.json()
+        except ValueError:
+            print("Retry response was not JSON:")
+            print(response.text)
+            raise
+
+    #  AWS- this error would show up in CloudWatch logs
     if response.status_code != 200:
         raise Exception(f"API request failed for {ticker}: {data}")
 
@@ -76,15 +91,16 @@ def get_stock_change(ticker):
     close_price = data.get("close")
 
     # Error handling for missing market data
-    # ex. weekends, market holidays, invalid dates, or API issues
+    # ex.weekends, market holidays, invalid dates, or API issues.
     if open_price is None or close_price is None:
         raise ValueError(f"Missing open or close price for {ticker}.")
 
-    # Required project formula:
+    # project formula:
     # ((Close - Open) / Open) * 100
     percent_change = ((close_price - open_price) / open_price) * 100
 
     # Return a structured result for each stock
+    # abs_percent_change is used only to compare movement size
     return {
         "date": DATE,
         "ticker": ticker,
