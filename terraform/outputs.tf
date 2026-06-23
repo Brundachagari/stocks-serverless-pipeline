@@ -13,3 +13,7 @@ output "api_url" {
 output "ingestion_lambda_name" {
   value = aws_lambda_function.ingestion_lambda.function_name
 }
+
+output "frontend_url" {
+  value = "http://${aws_s3_bucket_website_configuration.frontend.website_endpoint}"
+}
