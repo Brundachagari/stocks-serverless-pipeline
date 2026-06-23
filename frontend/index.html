@@ -1,349 +1,281 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Top Movers</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Movers Dashboard</title>
 
-<!-- pulling Chart.js straight from a CDN so there's no build step to deploy -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <!-- External stylesheet keeps the HTML easier to read and maintain. -->
+  <link rel="stylesheet" href="styles.css" />
 
-<style>
-  /* one place to change colors, so I'm not hunting through the file later */
-  :root {
-    --bg: #0d0d0f; --card: #18181b; --text: #f4f4f5; --muted: #a1a1aa;
-    --border: #2a2a2e; --accent: #6366f1; --up: #22c55e; --down: #ef4444;
-  }
-
-  * { box-sizing: border-box; }
-
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: system-ui, sans-serif;
-    line-height: 1.5;
-  }
-
-  /* keep everything in a narrow centered column so it reads on any screen */
-  .wrap {
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 40px 20px 60px;
-  }
-
-  h1 {
-    font-size: 30px;
-    margin: 0 0 4px;
-  }
-
-  .sub {
-    color: var(--muted);
-    margin: 0 0 24px;
-    font-size: 14px;
-  }
-
-  .bar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 20px;
-  }
-
-  button {
-    font: 600 14px system-ui;
-    color: #fff;
-    background: var(--accent);
-    border: 0;
-    border-radius: 9px;
-    padding: 9px 16px;
-    cursor: pointer;
-  }
-
-  button:disabled {
-    opacity: .6;
-  }
-
-  .source {
-    color: var(--muted);
-    font-size: 12px;
-    margin-left: auto;
-  }
-
-  /* shared card look for the chart and table */
-  .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 20px;
-    margin-bottom: 16px;
-  }
-
-  /* the one-line takeaway above the chart */
-  .insight {
-    background: #1e1b3a;
-    border: 1px solid #312e6b;
-    color: #c7d2fe;
-    border-radius: 12px;
-    padding: 14px 16px;
-    font-size: 14px;
-    margin-bottom: 16px;
-  }
-
-  .insight b {
-    font-weight: 600;
-  }
-
-  /* fixed height so Chart.js has room to draw and stays responsive */
-  .chart-box {
-    position: relative;
-    height: 300px;
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  th {
-    text-align: left;
-    font-size: 12px;
-    text-transform: uppercase;
-    color: var(--muted);
-    padding: 0 0 10px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  th.r,
-  td.r {
-    text-align: right;
-  }
-
-  td {
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  tr:last-child td {
-    border-bottom: 0;
-  }
-
-  .up {
-    color: var(--up);
-    font-weight: 600;
-  }
-
-  .down {
-    color: var(--down);
-    font-weight: 600;
-  }
-
-  footer {
-    color: var(--muted);
-    font-size: 12px;
-  }
-</style>
+  <!-- Chart.js is used for the bar chart without needing a frontend build tool. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 
 <body>
-  <div class="wrap">
-    <h1>Top Movers</h1>
-    <p class="sub">Biggest daily % move from the watchlist — AAPL, MSFT, GOOGL, AMZN, TSLA, NVDA.</p>
-
-    <div class="bar">
-      <button id="refresh">Refresh</button>
-      <span class="source">Source: <span id="source">loading...</span></span>
-    </div>
-
-    <!-- filled in by JS once the data loads -->
-    <div class="insight" id="insight"></div>
-
-    <!-- the chart gets drawn onto this canvas -->
-    <div class="card">
-      <div class="chart-box">
-        <canvas id="chart"></canvas>
+  <main class="page">
+    <section class="hero">
+      <div>
+        <h1>Stock Movers Dashboard</h1>
+        <p class="subtitle">
+          A serverless AWS dashboard that pulls recent stock mover data from API Gateway,
+          Lambda, and DynamoDB, then displays it in a simple frontend hosted on S3.
+        </p>
       </div>
-    </div>
 
-    <!-- the history table, rows added by JS -->
-    <div class="card">
+      <div class="status-card">
+        <div class="status-label">Data source</div>
+        <div class="status-value" id="source">loading...</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <h2>Percent Change by Date</h2>
+        <canvas id="moversChart"></canvas>
+      </div>
+
+      <div class="card">
+        <h2>Dashboard Insight</h2>
+
+        <div id="insight" class="insight">
+          Loading live stock mover data...
+        </div>
+
+        <div id="errorBox" class="error-box hidden"></div>
+
+        <div class="button-row">
+          <button id="refresh" type="button">Refresh Data</button>
+          <span class="small-text" id="updatedAt">Not updated yet</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Recent Movers</h2>
+
       <table>
         <thead>
           <tr>
             <th>Date</th>
             <th>Ticker</th>
-            <th class="r">% Change</th>
-            <th class="r">Close</th>
+            <th>Percent Change</th>
+            <th>Closing Price</th>
           </tr>
         </thead>
-        <tbody id="rows"></tbody>
+        <tbody id="rows">
+          <tr>
+            <td colspan="4">Loading...</td>
+          </tr>
+        </tbody>
       </table>
-    </div>
+    </section>
+  </main>
 
-    <!-- quick reminder of how the pieces connect -->
-    <footer>
-      EventBridge &rarr; Lambda &rarr; DynamoDB &rarr; API Gateway &rarr; S3 Static Website
-      <br />
-      API: https://86sc0f21kk.execute-api.us-east-1.amazonaws.com/movers
-    </footer>
-  </div>
+  <script>
+    // API Gateway endpoint connected to the Lambda that reads from DynamoDB.
+    const API_URL = "https://86sc0f21kk.execute-api.us-east-1.amazonaws.com/movers";
 
-<script>
-// point this at my "GET /movers" API URL
-const API_URL = "https://86sc0f21kk.execute-api.us-east-1.amazonaws.com/movers";
+    let chart = null;
 
-
-// hold onto the chart so I can tear it down before redrawing on refresh
-let chart = null;
-
-// small formatters, kept up here so they're easy to reuse
-const pct = (n) => (n > 0 ? "+" : "") + Number(n).toFixed(2) + "%";
-const usd = (n) => "$" + Number(n).toFixed(2);
-
-// grab the data: try the API, fall back to the sample if anything goes wrong
-async function getData() {
-  const res = await fetch(API_URL);
-
-  if (!res.ok) {
-    throw new Error("API request failed");
-  }
-
-  const body = await res.json();
-  const movers = Array.isArray(body) ? body : body.movers;
-
-  if (!Array.isArray(movers) || movers.length === 0) {
-    throw new Error("No mover data returned");
-  }
-
-  document.getElementById("source").textContent = "live API Gateway";
-  return movers;
-}
-
-    /*
-      This supports both response formats:
-
-      Old format:
-      [
-        { date, ticker, percent_change, closing_price }
-      ]
-
-      New polished format:
-      {
-        count: 7,
-        limit: 7,
-        movers: [
-          { date, ticker, percent_change, closing_price }
-        ]
+    async function getData() {
+      // The dashboard should rely on the live backend, not hardcoded sample data.
+      if (!API_URL) {
+        throw new Error("API URL is missing");
       }
-    */
-    const movers = Array.isArray(body) ? body : body.movers;
 
-    if (!Array.isArray(movers) || movers.length === 0) {
-      throw new Error("No mover data returned");
+      const response = await fetch(API_URL);
+
+      // If this fails, the issue is likely API Gateway, Lambda, CORS, or permissions.
+      if (!response.ok) {
+        throw new Error(`API request failed with status ${response.status}`);
+      }
+
+      const body = await response.json();
+
+      // Supports a few common response shapes while still requiring real API data.
+      const movers = Array.isArray(body)
+        ? body
+        : body.movers || body.items || body.data;
+
+      if (!Array.isArray(movers) || movers.length === 0) {
+        throw new Error("No mover data returned from the API");
+      }
+
+      document.getElementById("source").textContent = "live API Gateway";
+      return movers;
     }
 
-    document.getElementById("source").textContent = "live API Gateway";
-    return movers;
-  } catch (error) {
-    console.error("Using sample data because API failed:", error);
-    document.getElementById("source").textContent = "sample fallback";
-    return SAMPLE;
-  }
-}
-
-// draw the insight line, the chart, and the table from one set of rows
-function render(rows) {
-  const sortedRows = [...rows].sort((a, b) => a.date.localeCompare(b.date));
-
-  // find the single biggest move in either direction
-  const top = sortedRows.reduce((a, b) =>
-    Math.abs(b.percent_change) > Math.abs(a.percent_change) ? b : a
-  );
-
-  document.getElementById("insight").innerHTML =
-    `<b>${top.ticker}</b> moved the most this week — <b>${pct(top.percent_change)}</b> on ${top.date}`;
-
-  // wipe the old chart first or Chart.js stacks a new one on top
-  if (chart) chart.destroy();
-
-  chart = new Chart(document.getElementById("chart"), {
-    type: "bar",
-    data: {
-      labels: sortedRows.map((r) => r.date.slice(5)),
-      datasets: [{
-        data: sortedRows.map((r) => r.percent_change),
-        backgroundColor: sortedRows.map((r) => r.percent_change >= 0 ? "#22c55e" : "#ef4444"),
-        borderRadius: 5,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: (c) => sortedRows[c.dataIndex].ticker + "  " + pct(c.raw),
-          },
-        },
-      },
-      scales: {
-        y: {
-          ticks: {
-            callback: (v) => v + "%",
-            color: "#a1a1aa",
-          },
-          grid: {
-            color: "#26262b",
-          },
-        },
-        x: {
-          ticks: {
-            color: "#a1a1aa",
-          },
-          grid: {
-            display: false,
-          },
-        },
-      },
-    },
-  });
-
-  // newest day on top in the table
-  document.getElementById("rows").innerHTML = [...sortedRows].reverse().map((r) => `
-    <tr>
-      <td>${r.date}</td>
-      <td>${r.ticker}</td>
-      <td class="r ${r.percent_change >= 0 ? "up" : "down"}">${pct(r.percent_change)}</td>
-      <td class="r">${usd(r.closing_price)}</td>
-    </tr>
-  `).join("");
-}
-
-// load the data and redraw, disabling the button so it can't be spammed
-async function load() {
-  const btn = document.getElementById("refresh");
-  btn.disabled = true;
-
-  try {
-    const rows = await getData();
-    render(rows);
-  } catch (error) {
-    console.error("Could not load live API data:", error);
-
-    document.getElementById("source").textContent = "API unavailable";
-    document.getElementById("insight").textContent =
-      "Could not load live stock mover data from the API.";
-    document.getElementById("rows").innerHTML = "";
-
-    if (chart) {
-      chart.destroy();
-      chart = null;
+    function formatPercent(value) {
+      const number = Number(value);
+      if (Number.isNaN(number)) return "N/A";
+      return `${number.toFixed(2)}%`;
     }
-  }
 
-  btn.disabled = false;
-}
-</script>
+    function formatPrice(value) {
+      const number = Number(value);
+      if (Number.isNaN(number)) return "N/A";
+      return `$${number.toFixed(2)}`;
+    }
+
+    function renderTable(rows) {
+      const tableBody = document.getElementById("rows");
+
+      tableBody.innerHTML = rows.map((row) => {
+        const percent = Number(row.percent_change);
+        const percentClass = percent >= 0 ? "positive" : "negative";
+
+        return `
+          <tr>
+            <td>${row.date || "N/A"}</td>
+            <td class="ticker">${row.ticker || "N/A"}</td>
+            <td class="${percentClass}">${formatPercent(row.percent_change)}</td>
+            <td>${formatPrice(row.closing_price)}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function renderInsight(rows) {
+      const insight = document.getElementById("insight");
+
+      const strongestMove = [...rows].sort((a, b) => {
+        return Math.abs(Number(b.percent_change)) - Math.abs(Number(a.percent_change));
+      })[0];
+
+      if (!strongestMove) {
+        insight.textContent = "No insight available yet.";
+        return;
+      }
+
+      insight.innerHTML = `
+        <strong>${strongestMove.ticker}</strong> had the largest move in this dataset,
+        changing by <strong>${formatPercent(strongestMove.percent_change)}</strong>
+        on <strong>${strongestMove.date}</strong>. This shows the full pipeline working:
+        data is stored in DynamoDB, returned through Lambda/API Gateway, and visualized in the frontend.
+      `;
+    }
+
+    function renderChart(rows) {
+      const labels = rows.map((row) => `${row.date} ${row.ticker}`);
+      const values = rows.map((row) => Number(row.percent_change));
+
+      const ctx = document.getElementById("moversChart");
+
+      if (chart) {
+        chart.destroy();
+      }
+
+      chart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Percent Change",
+              data: values,
+              backgroundColor: values.map((value) =>
+                value >= 0 ? "rgba(34, 197, 94, 0.75)" : "rgba(239, 68, 68, 0.75)"
+              ),
+              borderColor: values.map((value) =>
+                value >= 0 ? "rgba(34, 197, 94, 1)" : "rgba(239, 68, 68, 1)"
+              ),
+              borderWidth: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {
+              labels: {
+                color: "#f4f4f5"
+              }
+            }
+          },
+          scales: {
+            x: {
+              ticks: {
+                color: "#a1a1aa"
+              },
+              grid: {
+                color: "#2a2a2e"
+              }
+            },
+            y: {
+              ticks: {
+                color: "#a1a1aa",
+                callback: (value) => `${value}%`
+              },
+              grid: {
+                color: "#2a2a2e"
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function render(rows) {
+      // Sort by date so the chart and table read like a timeline.
+      const sortedRows = [...rows].sort((a, b) => {
+        return new Date(a.date) - new Date(b.date);
+      });
+
+      renderTable(sortedRows);
+      renderInsight(sortedRows);
+      renderChart(sortedRows);
+
+      document.getElementById("updatedAt").textContent =
+        `Updated ${new Date().toLocaleTimeString()}`;
+    }
+
+    function showError(error) {
+      console.error("Could not load live stock mover data:", error);
+
+      document.getElementById("source").textContent = "API unavailable";
+
+      document.getElementById("rows").innerHTML = `
+        <tr>
+          <td colspan="4">No live data could be loaded.</td>
+        </tr>
+      `;
+
+      document.getElementById("insight").textContent =
+        "The dashboard could not load live data from the API.";
+
+      const errorBox = document.getElementById("errorBox");
+      errorBox.classList.remove("hidden");
+      errorBox.textContent =
+        "Live API data could not be loaded. Check API Gateway, Lambda logs, DynamoDB records, and CORS settings.";
+
+      if (chart) {
+        chart.destroy();
+        chart = null;
+      }
+    }
+
+    async function load() {
+      const button = document.getElementById("refresh");
+      const errorBox = document.getElementById("errorBox");
+
+      button.disabled = true;
+      errorBox.classList.add("hidden");
+      errorBox.textContent = "";
+
+      try {
+        const rows = await getData();
+        render(rows);
+      } catch (error) {
+        showError(error);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    document.getElementById("refresh").addEventListener("click", load);
+
+    load();
+  </script>
 </body>
 </html>
