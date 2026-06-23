@@ -71,3 +71,5 @@ terraform/.terraform/
 *.tfstate
 *.tfstate.backup
 terraform/*.zip
+terraform/*.tfvars
+terraform/*.auto.tfvars

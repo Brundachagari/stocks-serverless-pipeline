@@ -1,125 +1,153 @@
+"""Daily "biggest mover" Lambda.
+
+Pulls the previous trading day's bar for each ticker in the watchlist,
+picks the one that moved the most (up or down), and writes it to DynamoDB.
+Designed to be invoked once per day on an EventBridge schedule.
+
+External calls go through urllib rather than `requests` on purpose: it keeps
+the deployment package dependency-free so the function can ship as a plain zip
+(or even inline) without a layer or vendored libraries.
+"""
+
 import json
 import os
 import time
-from datetime import date, timedelta
+import urllib.request
+from datetime import datetime, timezone
 from decimal import Decimal
 
-import requests
 import boto3
 
+# Everything that might differ between environments is read from the env so the
+# same code runs locally, in staging, and in prod without edits. Terraform sets
+# these on the function; the defaults here just keep local testing painless.
+TABLE_NAME = os.getenv("TABLE_NAME", "stock-movers")
+STOCK_API_KEY = os.getenv("STOCK_API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.massive.com")
+
+# The free API tier caps us at ~5 requests/minute, so we space calls ~12s apart.
+# Pulled out as a knob in case we upgrade the plan and want to speed this up.
+REQUEST_DELAY_SECONDS = float(os.getenv("REQUEST_DELAY_SECONDS", "12"))
 
 WATCHLIST = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA"]
 
-TABLE_NAME = os.getenv("TABLE_NAME", "stock-movers")
+# Create these at module scope, not inside the handler: Lambda reuses a warm
+# container across invocations, so the boto3 client/table get reused instead of
+# rebuilt on every call. Cheap, but it shaves cold-start work off warm runs.
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
 
 
-def last_market_day():
-    """
-    Return the most recent weekday as YYYY-MM-DD.
+def fetch_previous_day_bar(ticker):
+    # Fail loudly and early if the key is missing rather than firing off a
+    # request that would just come back unauthorized.
+    if not STOCK_API_KEY:
+        raise ValueError("Missing STOCK_API_KEY environment variable.")
 
-    We want yesterday's session, but markets are closed on weekends, so a
-    Monday run has to reach back to Friday. This doesn't account for holidays —
-    on those days the API just returns nothing and the ticker gets skipped.
-    """
-    day = date.today() - timedelta(days=1)
-    while day.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
-        day -= timedelta(days=1)
-    return day.isoformat()
+    # The "/prev" endpoint hands back the most recent *completed* trading day's
+    # bar. Letting the API resolve that means we don't have to reason about
+    # weekends, holidays, or market hours ourselves.
+    url = (
+        f"{API_BASE_URL}/v2/aggs/ticker/{ticker}/prev"
+        f"?adjusted=true&apiKey={STOCK_API_KEY}"
+    )
 
+    # Short timeout so a hung connection can't pin the function until Lambda's
+    # own timeout kills it; we'd rather surface the error and move on.
+    with urllib.request.urlopen(url, timeout=10) as response:
+        data = json.loads(response.read().decode("utf-8"))
 
-TARGET_DATE = last_market_day()
+    results = data.get("results", [])
+    if not results:
+        # An empty result usually means a bad ticker or a day with no trading,
+        # so treat it as a hard error rather than silently storing nothing.
+        raise ValueError(f"No stock data returned for {ticker}")
 
+    bar = results[0]
+    open_price = float(bar["o"])
+    close_price = float(bar["c"])
 
-def get_stock_change(ticker, api_key):
-    """Fetch one ticker's open/close and return its daily percent change."""
-    url = f"https://api.massive.com/v1/open-close/{ticker}/{TARGET_DATE}"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    params = {"adjusted": "true"}
+    # The API reports the bar's timestamp in epoch milliseconds, so divide by
+    # 1000 before handing it to datetime. We keep just the date (UTC) since the
+    # bar represents a whole day, and use it as part of the DynamoDB key.
+    date_from_api = datetime.fromtimestamp(
+        bar["t"] / 1000,
+        tz=timezone.utc,
+    ).date().isoformat()
 
-    response = requests.get(url, headers=headers, params=params, timeout=10)
-    print(f"Fetching {ticker}... status {response.status_code}")
-
-    # Back off once on a rate limit, then retry. If it fails again we let the
-    # caller catch it so one bad ticker doesn't sink the whole run.
-    if response.status_code == 429:
-        print(f"Rate limited on {ticker}, waiting 65s before one retry...")
-        time.sleep(65)
-        response = requests.get(url, headers=headers, params=params, timeout=10)
-
-    try:
-        data = response.json()
-    except ValueError:
-        print(f"Non-JSON response for {ticker}: {response.text}")
-        raise
-
-    if response.status_code != 200:
-        raise Exception(f"API request failed for {ticker}: {data}")
-
-    open_price = data.get("open")
-    close_price = data.get("close")
-    if open_price is None or close_price is None:
-        # Happens on holidays or for a ticker the API has no data for that day.
-        raise ValueError(f"Missing open or close price for {ticker}.")
-
+    # "Move" here is the intraday open-to-close swing, not change vs. the prior
+    # close. Worth stating outright since both are reasonable definitions of a
+    # daily move and they can disagree on gap days.
     percent_change = ((close_price - open_price) / open_price) * 100
+
     return {
-        "date": TARGET_DATE,
+        "date": date_from_api,
         "ticker": ticker,
-        "open_price": open_price,
-        "closing_price": close_price,
         "percent_change": percent_change,
-        # Stored separately so the winner pick can rank by size of move
-        # regardless of direction — a -8% day should beat a +3% day.
-        "abs_percent_change": abs(percent_change),
+        "closing_price": close_price,
     }
 
 
-def save_winner_to_dynamodb(record):
-    """Write the day's winner to DynamoDB. Date is the partition key, one row per day."""
-    # DynamoDB rejects Python floats, so numerics go in as Decimal. Converting
-    # via str() avoids the float-precision garbage you get from Decimal(float).
-    item = {
-        "date": record["date"],
-        "ticker": record["ticker"],
-        "percent_change": Decimal(str(record["percent_change"])),
-        "closing_price": Decimal(str(record["closing_price"])),
-    }
-    table.put_item(Item=item)
-    print(f"Saved winner: {item}")
+def to_decimal(value):
+    # DynamoDB rejects native floats, so numbers have to go in as Decimal.
+    # Building the Decimal from a *string* (not the float directly) sidesteps
+    # binary-float artifacts like 1.1 -> 1.1000000000000001. Round to cents
+    # first since two decimal places is all this data needs.
+    return Decimal(str(round(value, 2)))
 
 
 def lambda_handler(event, context):
-    """Daily EventBridge trigger: find the biggest mover and store it."""
-    api_key = os.getenv("STOCK_API_KEY")
-    if not api_key:
-        raise ValueError("Missing STOCK_API_KEY environment variable.")
+    try:
+        movers = []
+        for index, ticker in enumerate(WATCHLIST):
+            # Pace every request after the first. Skipping the sleep on index 0
+            # avoids a pointless delay before the run even starts.
+            if index > 0:
+                time.sleep(REQUEST_DELAY_SECONDS)
+            stock_data = fetch_previous_day_bar(ticker)
+            movers.append(stock_data)
 
-    results = []
-    for ticker in WATCHLIST:
-        try:
-            # Space calls out to stay under the API's rate limit. Tune this to
-            # whatever the Massive free tier actually allows — 15s is cautious.
-            time.sleep(15)
-            results.append(get_stock_change(ticker, api_key))
-        except Exception as error:
-            # Skip the failed ticker but keep going — we'd rather pick a winner
-            # from 5 good tickers than fail the whole day over 1 bad response.
-            print(f"Error processing {ticker}: {error}")
+        # "Biggest mover" means the largest swing in either direction, so we
+        # compare on absolute value — a -8% drop should beat a +5% gain.
+        biggest_mover = max(
+            movers,
+            key=lambda item: abs(item["percent_change"]),
+        )
 
-    if not results:
-        raise Exception("No stock data was successfully retrieved.")
+        # Convert the numeric fields to Decimal only at the write boundary; the
+        # rest of the code stays in plain floats, which are easier to work with.
+        item = {
+            "date": biggest_mover["date"],
+            "ticker": biggest_mover["ticker"],
+            "percent_change": to_decimal(biggest_mover["percent_change"]),
+            "closing_price": to_decimal(biggest_mover["closing_price"]),
+        }
+        table.put_item(Item=item)
 
-    winner = max(results, key=lambda s: s["abs_percent_change"])
-    daily_winner_record = {
-        "date": winner["date"],
-        "ticker": winner["ticker"],
-        "percent_change": round(winner["percent_change"], 2),
-        "closing_price": winner["closing_price"],
-    }
-    print(f"Daily winner: {daily_winner_record}")
-
-    save_winner_to_dynamodb(daily_winner_record)
-
-    return {"statusCode": 200, "body": json.dumps(daily_winner_record)}
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "Daily mover stored successfully.",
+                # json.dumps can't serialize Decimal, so cast back to float for
+                # the response payload. (The authoritative copy in Dynamo stays
+                # Decimal — this is only for the API response.)
+                "item": {
+                    "date": item["date"],
+                    "ticker": item["ticker"],
+                    "percent_change": float(item["percent_change"]),
+                    "closing_price": float(item["closing_price"]),
+                },
+            }),
+        }
+    except Exception as error:
+        # Catch-all so a single bad ticker or API hiccup returns a clean 500
+        # instead of an unhandled stack trace. The print lands in CloudWatch,
+        # which is where we'd actually go to debug a failed scheduled run.
+        print(f"Error processing daily mover: {error}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({
+                "message": "Failed to process daily mover.",
+                "error": str(error),
+            }),
+        }
