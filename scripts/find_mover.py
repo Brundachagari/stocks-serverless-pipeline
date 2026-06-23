@@ -1,6 +1,9 @@
 import os
 import requests
+import time
 from dotenv import load_dotenv
+# I had to add time to avoid rate limiting issues with the stock API
+# (AWS- Lambda- added retry logic)
 
 
 # Local development secret handling
@@ -98,8 +101,12 @@ def get_stock_change(ticker):
 # - the loop handles the full watchlist
 results = []
 
+
+#during testing I got 429 rate-limit response
+#I added a delay between each request
 for ticker in WATCHLIST:
     try:
+        time.sleep(12)
         stock_result = get_stock_change(ticker)
         results.append(stock_result)
 
