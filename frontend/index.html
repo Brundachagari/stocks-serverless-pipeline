@@ -192,16 +192,6 @@
 // point this at my "GET /movers" API URL
 const API_URL = "https://86sc0f21kk.execute-api.us-east-1.amazonaws.com/movers";
 
-// hard-coded backup so the page is never empty, even if the API is down
-const SAMPLE = [
-  { date: "2026-06-11", ticker: "TSLA", percent_change:  2.80, closing_price: 399.15 },
-  { date: "2026-06-12", ticker: "AMZN", percent_change: -1.92, closing_price: 238.55 },
-  { date: "2026-06-15", ticker: "NVDA", percent_change:  1.69, closing_price: 212.45 },
-  { date: "2026-06-16", ticker: "NVDA", percent_change: -1.79, closing_price: 207.41 },
-  { date: "2026-06-17", ticker: "AMZN", percent_change: -3.02, closing_price: 237.50 },
-  { date: "2026-06-18", ticker: "AMZN", percent_change:  1.78, closing_price: 244.39 },
-  { date: "2026-06-22", ticker: "AMZN", percent_change: -3.04, closing_price: 232.79 },
-];
 
 // hold onto the chart so I can tear it down before redrawing on refresh
 let chart = null;
@@ -212,19 +202,22 @@ const usd = (n) => "$" + Number(n).toFixed(2);
 
 // grab the data: try the API, fall back to the sample if anything goes wrong
 async function getData() {
-  if (!API_URL) {
-    document.getElementById("source").textContent = "sample";
-    return SAMPLE;
+  const res = await fetch(API_URL);
+
+  if (!res.ok) {
+    throw new Error("API request failed");
   }
 
-  try {
-    const res = await fetch(API_URL);
+  const body = await res.json();
+  const movers = Array.isArray(body) ? body : body.movers;
 
-    if (!res.ok) {
-      throw new Error("API request failed");
-    }
+  if (!Array.isArray(movers) || movers.length === 0) {
+    throw new Error("No mover data returned");
+  }
 
-    const body = await res.json();
+  document.getElementById("source").textContent = "live API Gateway";
+  return movers;
+}
 
     /*
       This supports both response formats:
@@ -332,14 +325,25 @@ async function load() {
   const btn = document.getElementById("refresh");
   btn.disabled = true;
 
-  const rows = await getData();
-  render(rows);
+  try {
+    const rows = await getData();
+    render(rows);
+  } catch (error) {
+    console.error("Could not load live API data:", error);
+
+    document.getElementById("source").textContent = "API unavailable";
+    document.getElementById("insight").textContent =
+      "Could not load live stock mover data from the API.";
+    document.getElementById("rows").innerHTML = "";
+
+    if (chart) {
+      chart.destroy();
+      chart = null;
+    }
+  }
 
   btn.disabled = false;
 }
-
-document.getElementById("refresh").addEventListener("click", load);
-load();
 </script>
 </body>
 </html>
