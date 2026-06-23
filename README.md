@@ -1,164 +1,171 @@
-# stocks-serverless-pipeline
-Serverless AWS stock-mover pipeline built for Pennymac TRE: Terraform-managed Lambda, DynamoDB, API Gateway, and S3 app that automates daily watchlist analysis, stores the biggest mover, and serves a 7-day dashboard with secure, documented cloud architecture.
-
 # Stocks Serverless Pipeline
-A serverless AWS stock-mover dashboard that automates daily watchlist analysis, stores the biggest mover, and serves a 7-day dashboard with secure, documented cloud architecture.
 
-Live frontend:
-http://stock-movers-dashboard-556183271380.s3-website-us-east-1.amazonaws.com
+[![CI](https://github.com/Brundachagari/stocks-serverless-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Brundachagari/stocks-serverless-pipeline/actions/workflows/ci.yml)
 
-Live API:
-https://86sc0f21kk.execute-api.us-east-1.amazonaws.com/movers
+A fully automated, serverless AWS pipeline that wakes up every weekday, finds the
+single biggest mover in a tech-stock watchlist, stores the winner, and serves a
+7-day history through a public dashboard. All infrastructure is defined in
+Terraform and runs comfortably inside the AWS Free Tier.
 
-Example:
+**Live dashboard:** http://stock-movers-dashboard-556183271380.s3-website-us-east-1.amazonaws.com
+**Live API:** https://86sc0f21kk.execute-api.us-east-1.amazonaws.com/movers
+
+```bash
 curl https://86sc0f21kk.execute-api.us-east-1.amazonaws.com/movers
+```
 
-# project goal
-Project Goal
+---
 
-The goal of this project was to design, deploy, and document a serverless stock data pipeline using AWS Free Tier resources.
+## Project goal
 
-The watchlist is:
+Design, deploy, and document a serverless stock-data pipeline using AWS Free Tier
+resources. The watchlist is:
 
+```text
 AAPL, MSFT, GOOGL, AMZN, TSLA, NVDA
+```
 
-For each trading day, the ingestion Lambda checks the daily open and close prices for each ticker, calculates the percentage change, chooses the stock with the largest absolute movement, and saves that result.
+For each trading day, the ingestion Lambda pulls the open and close prices for each
+ticker, calculates the percentage change, and picks the stock with the **largest
+absolute movement** — a big drop can beat a smaller gain.
 
-Percentage change formula:
-
-((close - open) / open) * 100
-
-Example:
+```text
+Percentage change = ((close - open) / open) * 100
 
 AAPL: +1.20%
 TSLA: -4.10%
 NVDA: +2.70%
 
 Winner: TSLA, because |-4.10| is the largest absolute move.
+```
 
-Architecture
-Amazon EventBridge
-        |
-        v
-Ingestion Lambda
-        |
-        v
-Massive Stock API
-        |
-        v
-DynamoDB stock-movers table
-        |
-        v
-API Lambda
-        |
-        v
-API Gateway GET /movers
-        |
-        v
-S3 Static Website Frontend
+---
 
-This separates the project into two main backend responsibilities:
+## Architecture
 
-Ingestion logic: runs on a schedule, fetches stock data, calculates the winner, and stores the result.
-Retrieval logic: serves stored results to the frontend through a REST API.
+```mermaid
+flowchart TD
+    EB[EventBridge<br/>weekday cron] --> ING[Ingestion Lambda<br/>write-only]
+    ING --> EXT[Massive Stock API]
+    ING -->|biggest mover| DDB[(DynamoDB<br/>stock-movers)]
+    ING --> CW1[CloudWatch Logs]
 
-That separation keeps the daily data-processing job independent from the API used by the website.
+    S3[S3 Static Website<br/>dashboard] --> GW[API Gateway<br/>GET /movers]
+    GW --> READ[API Lambda<br/>read-only]
+    READ --> DDB
+    READ --> CW2[CloudWatch Logs]
+```
 
-# AWS Services Used
-Service	Purpose
-AWS Lambda:	Runs the ingestion and API backend logic
-Amazon EventBridge:	Triggers the ingestion Lambda on a schedule
-Amazon DynamoDB:	Stores daily stock mover results
-Amazon API Gateway:	Exposes the GET /movers endpoint
-Amazon S3:	Hosts the static frontend website
-AWS IAM:	Controls permissions between services
-Amazon CloudWatch: Logs	Provides logging and debugging visibility
-Terraform:	Defines and deploys AWS infrastructure as code
+The project is split into two independent backend responsibilities:
 
-# How the Pipeline Works
-EventBridge triggers the ingestion Lambda on a schedule.
-The ingestion Lambda loops through the watchlist.
-For each ticker, it requests daily stock data from the Massive API.
-The Lambda calculates percentage change using open and close prices.
-The stock with the largest absolute percentage move is selected.
-The result is stored in DynamoDB with the date, ticker, percent change, and closing price.
-API Gateway exposes GET /movers.
-The API Lambda reads recent records from DynamoDB.
-The frontend calls the API and displays the recent winners in a chart and table.
+- **Ingestion logic** runs on a schedule, fetches stock data, calculates the daily
+  winner, and stores the result.
+- **Retrieval logic** serves stored results to the frontend through a REST API.
 
+The two Lambdas have **separate, least-privilege IAM roles** — the ingestion
+function can only *write* to DynamoDB, the API function can only *read*. Public read
+traffic can never reach the write path, which keeps the scheduled job fully
+independent from the website's API.
 
-# API Design
-GET /movers
+---
 
-Returns recent stock mover records.
+## AWS services used
 
-Example response:
+| Service | Role in the pipeline |
+| --- | --- |
+| **AWS Lambda** | Runs the ingestion and API backend logic |
+| **Amazon EventBridge** | Triggers the ingestion Lambda on a schedule |
+| **Amazon DynamoDB** | Stores daily stock-mover results (one row per day) |
+| **Amazon API Gateway** | Exposes the `GET /movers` endpoint |
+| **Amazon S3** | Hosts the static frontend website |
+| **AWS IAM** | Scopes per-Lambda permissions to exactly what each needs |
+| **Amazon CloudWatch Logs** | Provides logging and debugging visibility |
+| **Terraform** | Defines and deploys all infrastructure as code |
 
+---
+
+## How the pipeline works
+
+1. **EventBridge** triggers the ingestion Lambda on a daily schedule.
+2. The Lambda loops through the watchlist and requests each ticker's daily data from
+   the **Massive** API.
+3. It calculates the percentage change from open to close for each ticker.
+4. It selects the stock with the **largest absolute** percentage move.
+5. The result is stored in **DynamoDB** with the date, ticker, percent change, and
+   closing price.
+6. **API Gateway** exposes `GET /movers`; the API Lambda reads recent records from
+   DynamoDB and returns them as JSON.
+7. The **S3 frontend** calls the API and renders the recent winners in a chart and table.
+
+---
+
+## API design
+
+### `GET /movers`
+
+Returns recent stock-mover records, newest first.
+
+```json
 {
   "count": 2,
   "limit": 7,
   "movers": [
-    {
-      "date": "2026-06-22",
-      "ticker": "AMZN",
-      "percent_change": -3.04,
-      "closing_price": 232.79
-    },
-    {
-      "date": "2026-06-18",
-      "ticker": "AMZN",
-      "percent_change": 1.78,
-      "closing_price": 244.39
-    }
+    { "date": "2026-06-22", "ticker": "AMZN", "percent_change": -3.04, "closing_price": 232.79 },
+    { "date": "2026-06-18", "ticker": "AMZN", "percent_change": 1.78, "closing_price": 244.39 }
   ]
 }
-GET /movers?limit=3
+```
 
-The API supports an optional limit query parameter.
+| Field | Meaning |
+| --- | --- |
+| `count` | Number of records returned |
+| `limit` | Requested (or default) record limit |
+| `movers` | The actual stock-mover data |
 
-The default limit is 7 records, and the maximum allowed limit is capped at 30 records so the API cannot be asked for an unreasonable amount of data.
+### `GET /movers?limit=N`
 
-Example:
+The endpoint accepts an optional `limit` query parameter. The default is **7**
+records, and the maximum is capped at **30** so the API can't be asked for an
+unreasonable amount of data.
 
+```bash
 curl "https://86sc0f21kk.execute-api.us-east-1.amazonaws.com/movers?limit=3"
+```
 
-The response includes:
+The API also sets response headers for CORS, JSON formatting, short-lived caching,
+and debugging.
 
-count   = number of records returned
-limit   = requested or default record limit
-movers  = actual stock mover data
+---
 
-The API also includes response headers for CORS, JSON formatting, short caching, and debugging.
+## Frontend
 
-# Frontend
+A static HTML/CSS/JavaScript dashboard hosted on S3. It displays:
 
-The frontend is a static HTML, CSS, and JavaScript dashboard hosted on S3.
+- the biggest recent mover,
+- a bar chart of daily percentage changes,
+- a table of recent winner records,
+- green/red color coding for gains and losses,
+- a visible data-source label showing when the dashboard is reading the live API.
 
-It displays:
+The frontend is intentionally lightweight. A full React or Next.js app would work,
+but for this challenge a static page is faster to deploy, cheaper to host, and still
+demonstrates the full pipeline clearly — and the brief explicitly weights robust
+architecture over a "pretty" UI.
 
-the biggest recent mover
-a bar chart of daily percentage changes
-a table of recent winner records
-green/red color coding for gains and losses
-a visible data source label showing when the dashboard is using the live API
+---
 
-I kept the frontend lightweight on purpose. A full React or Next.js app would work, but for this challenge a static page is easier to deploy, cheaper to host, and still shows the full pipeline clearly.
+## Repository structure
 
-
-#Repository Structure
+```text
 stocks-serverless-pipeline/
 ├── frontend/
-│   └── index.html
-│
+│   └── index.html                # static dashboard (Chart.js, no build step)
 ├── lambdas/
 │   ├── api/
-│   │   └── lambda_function.py
-│   │
+│   │   └── lambda_function.py     # GET /movers: read recent winners from DynamoDB
 │   └── ingestion/
-│       └── lambda_function.py
-│
-├── scripts/
-│
+│       └── lambda_function.py     # scheduled: fetch, find, and store the daily winner
+├── scripts/                       # local-only helpers for testing the API
 ├── terraform/
 │   ├── api_gateway.tf
 │   ├── dynamodb.tf
@@ -167,89 +174,103 @@ stocks-serverless-pipeline/
 │   ├── lambda_ingestion.tf
 │   ├── outputs.tf
 │   └── provider.tf
-│
+├── .github/workflows/ci.yml       # validates Terraform + Lambda syntax on every push
 ├── .gitignore
 ├── README.md
 └── requirements.txt
+```
 
+---
 
-# IaC
+## Infrastructure as code
 
-All AWS resources are managed with Terraform.
+All AWS resources are managed with Terraform — no manual AWS Console clicking for any
+deployed infrastructure. Terraform defines the S3 frontend hosting, both Lambda
+functions, the DynamoDB table, the API Gateway route, the EventBridge schedule, the
+IAM permissions, and the outputs.
 
-The project avoids manual AWS Console setup for the deployed infrastructure. Terraform defines the S3 frontend hosting, Lambda functions, DynamoDB table, API Gateway route, EventBridge schedule, IAM permissions, and outputs.
-
-Basic deployment flow:
-
+```bash
 cd terraform
 terraform init
 terraform fmt
 terraform plan
 terraform apply
+```
 
-After deployment, Terraform outputs the live API URL and frontend URL.
+After `apply`, Terraform prints the live API URL and frontend URL as outputs.
 
-# Security Notes
+---
 
-I kept secrets out of the public repository.
+## Security
 
-The stock API key is stored locally and passed into the deployed environment through Terraform configuration, not hardcoded into Lambda source files or committed to GitHub.
+- **No API keys in the repo.** The Massive API key is passed into the deployed
+  environment through a Terraform variable marked `sensitive` — never hardcoded into
+  Lambda source or committed to GitHub.
+- **Least-privilege IAM.** Each Lambda's role is scoped to only the resources it
+  needs: write-only DynamoDB access for ingestion, read-only for the API.
+- **Minimal public surface.** API Gateway only exposes the read endpoint the frontend
+  needs; CORS is enabled for that access.
+- **Nothing sensitive in git.** `.env`, `.tfvars`, `.auto.tfvars`, Terraform state
+  files, and Lambda zip artifacts are all `.gitignore`d so credentials and local
+  build files never land in the repo.
+- **Infrastructure managed by Terraform** rather than manual changes, so every
+  permission and resource is reviewable in code.
 
-Files such as .env, .tfvars, .auto.tfvars, Terraform state files, and Lambda zip artifacts are ignored so private credentials and local build files do not end up in the repo.
+---
 
-# Security-related decisions:
+## Error handling and robustness
 
-no API keys committed to GitHub
-IAM permissions are scoped to the resources the Lambdas need
-API Gateway only exposes the read endpoint needed by the frontend
-CORS is enabled for frontend access
-Terraform manages infrastructure changes instead of manual clicking
+The API Lambda includes safeguards for common issues:
 
-# Error Handling and Robustness
+- applies a sensible default record limit,
+- validates malformed `limit` query parameters,
+- caps oversized `limit` requests,
+- converts DynamoDB `Decimal` values into JSON-safe numbers,
+- returns a clear error message if data can't be retrieved,
+- sets CORS headers so the frontend can call the API safely.
 
-The API Lambda includes safeguards for common API issues:
+For the current scale, the API Lambda scans the DynamoDB table and sorts records in
+memory. That's acceptable here because the table stores only one winner per day, so
+the dataset stays small. At production scale (years of records), the right move is a
+date-based query or a secondary index instead of a scan.
 
-supports a default record limit
-validates malformed limit query parameters
-caps large limit requests
-converts DynamoDB Decimal values into JSON-safe numbers
-returns a clear error message if the API cannot retrieve data
-includes CORS headers so the frontend can call the API safely
+---
 
-For the current project scale, the API Lambda scans the DynamoDB table and sorts records in memory. That is acceptable here because the table stores only one winner per day, so the dataset remains small.
+## Design trade-offs
 
-If this grew into a production system with years of stock records, I would redesign the table access pattern around a date-based query or a secondary index instead of scanning.
+- **Static frontend instead of React.** The challenge is about the serverless data
+  pipeline, not frontend complexity, so a plain static page keeps it easy to deploy
+  and review.
+- **DynamoDB scan for retrieval.** One record per day means a scan is simple and cheap
+  at this scale; a larger dataset would justify a query-first table design.
+- **One daily winner per date.** Storing only the single largest mover keeps the table
+  small and focused on the dashboard's requirement, rather than every raw response.
+- **`limit` parameter, default 7.** The challenge asks for recent history, so the API
+  defaults to 7 records but accepts a `limit` for flexibility without frontend changes.
 
-# Design Trade-Offs
-Static frontend instead of React
+---
 
-I used a plain static frontend because the challenge is mainly about the serverless data pipeline, not frontend complexity. This keeps the app easy to deploy and easy to review.
+## Local development
 
-DynamoDB scan for retrieval
-
-The table stores one record per day, so a scan is simple and inexpensive at this scale. For a larger production dataset, I would use a query-first table design.
-
-One daily winner per date
-
-The project stores the single largest mover per day instead of storing every stock’s full raw response. This keeps the table small and focused on the dashboard requirement.
-
-API returns up to 7 records by default
-
-The challenge asks for recent history, so the API defaults to 7 records. I added a limit parameter to make the endpoint more flexible without changing the frontend.
-
-# Local Development Notes
-
-To work on the project locally:
-
+```bash
 git clone https://github.com/Brundachagari/stocks-serverless-pipeline.git
 cd stocks-serverless-pipeline
-
-Install Python dependencies if testing scripts locally:
-
 pip install -r requirements.txt
+```
 
-For local stock API testing, create a local .env file:
+For local stock-API testing, create a `.env` file (never commit it):
 
+```text
 STOCK_API_KEY=your_key_here
+```
 
-Do not commit .env.#
+---
+
+## Possible next steps
+
+- Move the API key into **AWS Secrets Manager** so it's absent from both the Lambda
+  config and Terraform state.
+- Add a **CloudWatch alarm → SNS email** on ingestion errors.
+- Extend the GitHub Actions workflow to **`terraform apply` on merge** for full CI/CD.
+- Migrate to a **remote Terraform state backend** (S3 + DynamoDB lock) for team-safe
+  collaboration.

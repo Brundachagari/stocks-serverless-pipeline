@@ -66,3 +66,4 @@ print(f"\nTicker: {TICKER}")
 print(f"Open: {open_price}")
 print(f"Close: {close_price}")
 print(f"Percent change: {percent_change:.2f}%")
+
