@@ -14,47 +14,137 @@
     --bg: #0d0d0f; --card: #18181b; --text: #f4f4f5; --muted: #a1a1aa;
     --border: #2a2a2e; --accent: #6366f1; --up: #22c55e; --down: #ef4444;
   }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: system-ui, sans-serif; line-height: 1.5;
-  }
-  /* keep everything in a narrow centered column so it reads on any screen */
-  .wrap { max-width: 720px; margin: 0 auto; padding: 40px 20px 60px; }
-  h1 { font-size: 30px; margin: 0 0 4px; }
-  .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
 
-  .bar { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
-  button {
-    font: 600 14px system-ui; color: #fff; background: var(--accent);
-    border: 0; border-radius: 9px; padding: 9px 16px; cursor: pointer;
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, sans-serif;
+    line-height: 1.5;
   }
-  button:disabled { opacity: .6; } /* dims while a refresh is in flight */
-  .source { color: var(--muted); font-size: 12px; margin-left: auto; } /* push to far right */
+
+  /* keep everything in a narrow centered column so it reads on any screen */
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 40px 20px 60px;
+  }
+
+  h1 {
+    font-size: 30px;
+    margin: 0 0 4px;
+  }
+
+  .sub {
+    color: var(--muted);
+    margin: 0 0 24px;
+    font-size: 14px;
+  }
+
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  button {
+    font: 600 14px system-ui;
+    color: #fff;
+    background: var(--accent);
+    border: 0;
+    border-radius: 9px;
+    padding: 9px 16px;
+    cursor: pointer;
+  }
+
+  button:disabled {
+    opacity: .6;
+  }
+
+  .source {
+    color: var(--muted);
+    font-size: 12px;
+    margin-left: auto;
+  }
 
   /* shared card look for the chart and table */
   .card {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 14px; padding: 20px; margin-bottom: 16px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 16px;
   }
-  /* the one-line takeaway above the chart */
-  .insight { background: #1e1b3a; border: 1px solid #312e6b; color: #c7d2fe;
-    border-radius: 12px; padding: 14px 16px; font-size: 14px; margin-bottom: 16px; }
-  .insight b { font-weight: 600; }
-  /* fixed height so Chart.js has room to draw and stays responsive */
-  .chart-box { position: relative; height: 300px; }
 
-  table { width: 100%; border-collapse: collapse; }
-  th { text-align: left; font-size: 12px; text-transform: uppercase; color: var(--muted);
-    padding: 0 0 10px; border-bottom: 1px solid var(--border); }
-  th.r, td.r { text-align: right; } /* numbers line up nicer on the right */
-  td { padding: 12px 0; border-bottom: 1px solid var(--border); }
-  tr:last-child td { border-bottom: 0; }
-  .up { color: var(--up); font-weight: 600; } /* green for a gain */
-  .down { color: var(--down); font-weight: 600; } /* red for a drop */
-  footer { color: var(--muted); font-size: 12px; }
+  /* the one-line takeaway above the chart */
+  .insight {
+    background: #1e1b3a;
+    border: 1px solid #312e6b;
+    color: #c7d2fe;
+    border-radius: 12px;
+    padding: 14px 16px;
+    font-size: 14px;
+    margin-bottom: 16px;
+  }
+
+  .insight b {
+    font-weight: 600;
+  }
+
+  /* fixed height so Chart.js has room to draw and stays responsive */
+  .chart-box {
+    position: relative;
+    height: 300px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th {
+    text-align: left;
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0 0 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  th.r,
+  td.r {
+    text-align: right;
+  }
+
+  td {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .up {
+    color: var(--up);
+    font-weight: 600;
+  }
+
+  .down {
+    color: var(--down);
+    font-weight: 600;
+  }
+
+  footer {
+    color: var(--muted);
+    font-size: 12px;
+  }
 </style>
 </head>
+
 <body>
   <div class="wrap">
     <h1>Top Movers</h1>
@@ -62,33 +152,45 @@
 
     <div class="bar">
       <button id="refresh">Refresh</button>
-      <!-- shows whether the data is live or the fallback sample -->
-      <span class="source">Source: <span id="source">sample</span></span>
+      <span class="source">Source: <span id="source">loading...</span></span>
     </div>
 
     <!-- filled in by JS once the data loads -->
     <div class="insight" id="insight"></div>
 
     <!-- the chart gets drawn onto this canvas -->
-    <div class="card"><div class="chart-box"><canvas id="chart"></canvas></div></div>
+    <div class="card">
+      <div class="chart-box">
+        <canvas id="chart"></canvas>
+      </div>
+    </div>
 
     <!-- the history table, rows added by JS -->
     <div class="card">
       <table>
         <thead>
-          <tr><th>Date</th><th>Ticker</th><th class="r">% Change</th><th class="r">Close</th></tr>
+          <tr>
+            <th>Date</th>
+            <th>Ticker</th>
+            <th class="r">% Change</th>
+            <th class="r">Close</th>
+          </tr>
         </thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
 
     <!-- quick reminder of how the pieces connect -->
-    <footer>EventBridge &rarr; Lambda &rarr; DynamoDB &rarr; API Gateway &rarr; S3</footer>
+    <footer>
+      EventBridge &rarr; Lambda &rarr; DynamoDB &rarr; API Gateway &rarr; S3 Static Website
+      <br />
+      API: https://86sc0f21kk.execute-api.us-east-1.amazonaws.com/movers
+    </footer>
   </div>
 
 <script>
 // point this at my "GET /movers" API URL
-const API_URL = "http://stock-movers-dashboard-556183271380.s3-website-us-east-1.amazonaws.com";
+const API_URL = "https://86sc0f21kk.execute-api.us-east-1.amazonaws.com/movers";
 
 // hard-coded backup so the page is never empty, even if the API is down
 const SAMPLE = [
@@ -105,81 +207,139 @@ const SAMPLE = [
 let chart = null;
 
 // small formatters, kept up here so they're easy to reuse
-const pct = (n) => (n > 0 ? "+" : "") + Number(n).toFixed(2) + "%"; // adds the + sign on gains
+const pct = (n) => (n > 0 ? "+" : "") + Number(n).toFixed(2) + "%";
 const usd = (n) => "$" + Number(n).toFixed(2);
 
 // grab the data: try the API, fall back to the sample if anything goes wrong
 async function getData() {
-  if (!API_URL) return SAMPLE; // no URL set yet, just use the sample
+  if (!API_URL) {
+    document.getElementById("source").textContent = "sample";
+    return SAMPLE;
+  }
+
   try {
     const res = await fetch(API_URL);
+
+    if (!res.ok) {
+      throw new Error("API request failed");
+    }
+
     const body = await res.json();
-    document.getElementById("source").textContent = "live API";
-    // accept a plain array or an object wrapped like { items: [...] }
-    return Array.isArray(body) ? body : body.items;
-  } catch {
-    // network error or bad response, so show the sample and say so
-    document.getElementById("source").textContent = "sample (API down)";
+
+    /*
+      This supports both response formats:
+
+      Old format:
+      [
+        { date, ticker, percent_change, closing_price }
+      ]
+
+      New polished format:
+      {
+        count: 7,
+        limit: 7,
+        movers: [
+          { date, ticker, percent_change, closing_price }
+        ]
+      }
+    */
+    const movers = Array.isArray(body) ? body : body.movers;
+
+    if (!Array.isArray(movers) || movers.length === 0) {
+      throw new Error("No mover data returned");
+    }
+
+    document.getElementById("source").textContent = "live API Gateway";
+    return movers;
+  } catch (error) {
+    console.error("Using sample data because API failed:", error);
+    document.getElementById("source").textContent = "sample fallback";
     return SAMPLE;
   }
 }
 
 // draw the insight line, the chart, and the table from one set of rows
 function render(rows) {
-  rows.sort((a, b) => a.date.localeCompare(b.date)); // oldest to newest, left to right
+  const sortedRows = [...rows].sort((a, b) => a.date.localeCompare(b.date));
 
-  // find the single biggest move in either direction (abs so a big drop counts too)
-  const top = rows.reduce((a, b) => (Math.abs(b.percent_change) > Math.abs(a.percent_change) ? b : a));
+  // find the single biggest move in either direction
+  const top = sortedRows.reduce((a, b) =>
+    Math.abs(b.percent_change) > Math.abs(a.percent_change) ? b : a
+  );
+
   document.getElementById("insight").innerHTML =
     `<b>${top.ticker}</b> moved the most this week — <b>${pct(top.percent_change)}</b> on ${top.date}`;
 
   // wipe the old chart first or Chart.js stacks a new one on top
   if (chart) chart.destroy();
+
   chart = new Chart(document.getElementById("chart"), {
     type: "bar",
     data: {
-      labels: rows.map((r) => r.date.slice(5)), // just MM-DD on the axis
+      labels: sortedRows.map((r) => r.date.slice(5)),
       datasets: [{
-        data: rows.map((r) => r.percent_change),
-        // color each bar by direction instead of one flat color
-        backgroundColor: rows.map((r) => (r.percent_change >= 0 ? "#22c55e" : "#ef4444")),
+        data: sortedRows.map((r) => r.percent_change),
+        backgroundColor: sortedRows.map((r) => r.percent_change >= 0 ? "#22c55e" : "#ef4444"),
         borderRadius: 5,
       }],
     },
     options: {
-      responsive: true, maintainAspectRatio: false, // let it fill the card
+      responsive: true,
+      maintainAspectRatio: false,
       plugins: {
-        legend: { display: false }, // only one series, so no legend needed
-        // show the ticker in the hover tooltip, not just the number
-        tooltip: { callbacks: { label: (c) => rows[c.dataIndex].ticker + "  " + pct(c.raw) } },
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (c) => sortedRows[c.dataIndex].ticker + "  " + pct(c.raw),
+          },
+        },
       },
       scales: {
-        // light ticks and faint gridlines so they read on the dark background
-        y: { ticks: { callback: (v) => v + "%", color: "#a1a1aa" }, grid: { color: "#26262b" } },
-        x: { ticks: { color: "#a1a1aa" }, grid: { display: false } },
+        y: {
+          ticks: {
+            callback: (v) => v + "%",
+            color: "#a1a1aa",
+          },
+          grid: {
+            color: "#26262b",
+          },
+        },
+        x: {
+          ticks: {
+            color: "#a1a1aa",
+          },
+          grid: {
+            display: false,
+          },
+        },
       },
     },
   });
 
-  // newest day on top in the table (reverse since rows are oldest-first now)
-  document.getElementById("rows").innerHTML = [...rows].reverse().map((r) => `
+  // newest day on top in the table
+  document.getElementById("rows").innerHTML = [...sortedRows].reverse().map((r) => `
     <tr>
       <td>${r.date}</td>
       <td>${r.ticker}</td>
       <td class="r ${r.percent_change >= 0 ? "up" : "down"}">${pct(r.percent_change)}</td>
       <td class="r">${usd(r.closing_price)}</td>
-    </tr>`).join("");
+    </tr>
+  `).join("");
 }
 
 // load the data and redraw, disabling the button so it can't be spammed
 async function load() {
   const btn = document.getElementById("refresh");
   btn.disabled = true;
-  render(await getData());
+
+  const rows = await getData();
+  render(rows);
+
   btn.disabled = false;
 }
-document.getElementById("refresh").addEventListener("click", load); // refresh on click
-load(); // and run once on page load
+
+document.getElementById("refresh").addEventListener("click", load);
+load();
 </script>
 </body>
 </html>
