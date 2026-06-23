@@ -43,3 +43,11 @@ terraform.rc
 # Uncomment the line below if you want to ignore planout files.
 # planout.env
 .env
+
+# Python virtual environment
+.venv/
+venv/
+
+# Local environment variables / secrets
+.env
+.env.*
