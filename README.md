@@ -7,7 +7,7 @@ single biggest mover in a tech-stock watchlist, stores the winner, and serves a
 7-day history through a public dashboard. All infrastructure is defined in
 Terraform and runs comfortably inside the AWS Free Tier.
 
-**Live dashboard:** http://stock-movers-dashboard-556183271380.s3-website-us-east-1.amazonaws.com
+**Live dashboard:** http://stock-movers-dashboard-556183271380.s3-website-us-east-1.amazonaws.com/
 **Live API:** https://86sc0f21kk.execute-api.us-east-1.amazonaws.com/movers
 
 ```bash
