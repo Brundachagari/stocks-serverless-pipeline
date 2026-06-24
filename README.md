@@ -269,7 +269,7 @@ STOCK_API_KEY=your_key_here
 ## Possible next steps
 
 - Move the API key into **AWS Secrets Manager** so it's absent from both the Lambda
-  config and Terraform state.
+  config and Terraform state-- corrected: I moved the stock API key into AWS Secrets Manager. Terraform creates the secret metadata and passes only the secret ARN into the ingestion Lambda. I add the actual API key using the AWS CLI so it does not go into GitHub, Lambda environment variables, or Terraform state. Then I updated the Lambda IAM policy with least-privilege access to secretsmanager:GetSecretValue, so the ingestion function can securely fetch the key at runtime.
 - Add a **CloudWatch alarm → SNS email** on ingestion errors.
 - Extend the GitHub Actions workflow to **`terraform apply` on merge** for full CI/CD.
 - Migrate to a **remote Terraform state backend** (S3 + DynamoDB lock) for team-safe
