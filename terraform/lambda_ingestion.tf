@@ -1,9 +1,3 @@
-variable "stock_api_key" {
-  description = "API key for the stock data provider"
-  type        = string
-  sensitive   = true
-}
-
 # Packages the ingestion Lambda directly from its Python file.
 # No external dependencies are needed because the Lambda uses urllib.
 data "archive_file" "ingestion_lambda_zip" {
@@ -13,45 +7,53 @@ data "archive_file" "ingestion_lambda_zip" {
 }
 
 # IAM role for the scheduled ingestion Lambda.
+# This only lets AWS Lambda assume/use this role.
 resource "aws_iam_role" "ingestion_lambda_role" {
   name = "stock-movers-ingestion-lambda-role"
 
   assume_role_policy = jsonencode({
-    Version = "2012-10-17",
+    Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow",
+        Effect = "Allow"
         Principal = {
           Service = "lambda.amazonaws.com"
-        },
+        }
         Action = "sts:AssumeRole"
       }
     ]
   })
 }
 
-# This Lambda writes the daily winner to DynamoDB and logs to CloudWatch.
+# This Lambda writes to DynamoDB, logs to CloudWatch, and reads the API key from Secrets Manager.
 resource "aws_iam_role_policy" "ingestion_lambda_policy" {
   name = "stock-movers-ingestion-lambda-policy"
   role = aws_iam_role.ingestion_lambda_role.id
 
   policy = jsonencode({
-    Version = "2012-10-17",
+    Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow",
+        Effect = "Allow"
         Action = [
           "dynamodb:PutItem"
-        ],
+        ]
         Resource = aws_dynamodb_table.stock_movers.arn
       },
       {
-        Effect = "Allow",
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = aws_secretsmanager_secret.stock_api_key.arn
+      },
+      {
+        Effect = "Allow"
         Action = [
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
           "logs:PutLogEvents"
-        ],
+        ]
         Resource = "*"
       }
     ]
@@ -72,7 +74,7 @@ resource "aws_lambda_function" "ingestion_lambda" {
   environment {
     variables = {
       TABLE_NAME            = aws_dynamodb_table.stock_movers.name
-      STOCK_API_KEY         = var.stock_api_key
+      STOCK_API_SECRET_ARN  = aws_secretsmanager_secret.stock_api_key.arn
       API_BASE_URL          = "https://api.massive.com"
       REQUEST_DELAY_SECONDS = "12"
     }

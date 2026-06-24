@@ -1,14 +1,3 @@
-"""Daily "biggest mover" Lambda.
-
-Pulls the previous trading day's bar for each ticker in the watchlist,
-picks the one that moved the most (up or down), and writes it to DynamoDB.
-Designed to be invoked once per day on an EventBridge schedule.
-
-External calls go through urllib rather than `requests` on purpose: it keeps
-the deployment package dependency-free so the function can ship as a plain zip
-(or even inline) without a layer or vendored libraries.
-"""
-
 import json
 import os
 import time
@@ -22,7 +11,7 @@ import boto3
 # same code runs locally, in staging, and in prod without edits. Terraform sets
 # these on the function; the defaults here just keep local testing painless.
 TABLE_NAME = os.getenv("TABLE_NAME", "stock-movers")
-STOCK_API_KEY = os.getenv("STOCK_API_KEY")
+STOCK_API_SECRET_ARN = os.getenv("STOCK_API_SECRET_ARN")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.massive.com")
 
 # The free API tier caps us at ~5 requests/minute, so we space calls ~12s apart.
@@ -37,19 +26,48 @@ WATCHLIST = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA"]
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
 
+secrets_client = boto3.client("secretsmanager")
+_cached_stock_api_key = None
+
+
+def get_stock_api_key():
+    global _cached_stock_api_key
+
+    if _cached_stock_api_key:
+        return _cached_stock_api_key
+
+    if not STOCK_API_SECRET_ARN:
+        raise ValueError("Missing STOCK_API_SECRET_ARN environment variable.")
+
+    response = secrets_client.get_secret_value(
+        SecretId=STOCK_API_SECRET_ARN
+    )
+
+    secret_string = response.get("SecretString")
+    if not secret_string:
+        raise ValueError("Secret value is empty.")
+
+    secret_json = json.loads(secret_string)
+    api_key = secret_json.get("STOCK_API_KEY")
+
+    if not api_key:
+        raise ValueError("STOCK_API_KEY not found in secret.")
+
+    _cached_stock_api_key = api_key
+    return api_key
+
 
 def fetch_previous_day_bar(ticker):
-    # Fail loudly and early if the key is missing rather than firing off a
-    # request that would just come back unauthorized.
-    if not STOCK_API_KEY:
-        raise ValueError("Missing STOCK_API_KEY environment variable.")
+    # Pull the real API key from Secrets Manager at runtime instead of storing
+    # it directly in Lambda environment variables.
+    stock_api_key = get_stock_api_key()
 
     # The "/prev" endpoint hands back the most recent *completed* trading day's
     # bar. Letting the API resolve that means we don't have to reason about
     # weekends, holidays, or market hours ourselves.
     url = (
         f"{API_BASE_URL}/v2/aggs/ticker/{ticker}/prev"
-        f"?adjusted=true&apiKey={STOCK_API_KEY}"
+        f"?adjusted=true&apiKey={stock_api_key}"
     )
 
     # Short timeout so a hung connection can't pin the function until Lambda's
